@@ -1,0 +1,12 @@
+[package]
+name = "leap_demo_rs"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+macroquad = "0.4"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
