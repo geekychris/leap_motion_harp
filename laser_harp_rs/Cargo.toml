@@ -9,6 +9,7 @@ macroquad = "0.4"
 cpal = "0.15"
 midir = "0.10"
 crossbeam-channel = "0.5"
+image = { version = "0.24", default-features = false, features = ["png"] }
 
 [profile.release]
 lto = "thin"

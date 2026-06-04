@@ -447,24 +447,109 @@ fn window_conf() -> Conf {
     }
 }
 
+/// Synthesise hand snapshots for a screenshot. The two hands cover different
+/// octave columns, have a mix of extended/curled fingers, and the right hand
+/// is pinching (sustain pedal engaged), so the rendered frame shows all of
+/// the visual systems lit up at once.
+fn mock_demo_state() -> SharedState {
+    let left_palm = [-180.0, 250.0, 20.0];
+    let left_finger = |x: f32, y: f32, ext: bool| FingerSnap {
+        tip: [x, y, 0.0],
+        is_extended: ext,
+    };
+    let left_fingers = [
+        left_finger(left_palm[0] - 50.0, left_palm[1] - 50.0, false), // thumb curled
+        left_finger(-200.0, 200.0, true),                              // index on D
+        left_finger(-185.0, 280.0, true),                              // middle on E
+        left_finger(-170.0, 360.0, true),                              // ring on G
+        left_finger(-150.0, 410.0, false),                             // pinky curled
+    ];
+
+    let right_palm = [150.0, 290.0, 15.0];
+    let right_finger = |x: f32, y: f32, ext: bool| FingerSnap {
+        tip: [x, y, 0.0],
+        is_extended: ext,
+    };
+    let right_fingers = [
+        right_finger(right_palm[0] - 50.0, right_palm[1] - 40.0, false), // thumb
+        right_finger(130.0, 200.0, true),                                 // index on D
+        right_finger(150.0, 280.0, true),                                 // middle on E
+        right_finger(165.0, 340.0, false),                                // ring curled
+        right_finger(180.0, 440.0, true),                                 // pinky on A
+    ];
+
+    SharedState {
+        hands: vec![
+            HandSnap {
+                id: 1,
+                is_left: true,
+                palm: left_palm,
+                pinch: 0.30,
+                fingers: left_fingers,
+            },
+            HandSnap {
+                id: 2,
+                is_left: false,
+                palm: right_palm,
+                pinch: 0.85,
+                fingers: right_fingers,
+            },
+        ],
+        framerate: 120.0,
+        connected: true,
+        // D and E ringing on both hands, G on the left, A on the right
+        string_pulse: [0.0, 0.85, 0.7, 0.55, 0.45],
+        active_per_string: [0, 2, 2, 1, 1],
+        sustain: true,
+        transpose: 0,
+        instrument_left: Instrument::FmBell,
+        instrument_right: Instrument::Pluck,
+        swap_hands: true,
+    }
+}
+
 #[macroquad::main(window_conf)]
 async fn main() {
-    let synth_handle = match synth::start() {
-        Ok(h) => Some(h),
-        Err(e) => {
-            eprintln!("audio: {e} — running silent");
-            None
+    // Screenshot mode: render a few frames with synthetic hand data and write a
+    // PNG, bypassing OS screen-capture permissions. Set LASER_HARP_SCREENSHOT to
+    // the output PNG path. The synth and Leap poll thread are skipped entirely
+    // in this mode.
+    let screenshot_path = std::env::var("LASER_HARP_SCREENSHOT").ok();
+    let screenshot_mode = screenshot_path.is_some();
+
+    let synth_handle = if screenshot_mode {
+        None
+    } else {
+        match synth::start() {
+            Ok(h) => Some(h),
+            Err(e) => {
+                eprintln!("audio: {e} — running silent");
+                None
+            }
         }
     };
     let synth_tx = synth_handle.as_ref().map(|h| h.tx.clone());
 
-    let midi = Arc::new(Mutex::new(MidiOut::open()));
-    let midi_label = midi.lock().unwrap().label.clone();
+    let midi = Arc::new(Mutex::new(if screenshot_mode {
+        MidiOut::disabled()
+    } else {
+        MidiOut::open()
+    }));
+    let midi_label = if screenshot_mode {
+        "virtual port \"Leap Laser Harp\"".to_string()
+    } else {
+        midi.lock().unwrap().label.clone()
+    };
 
-    let state = Arc::new(Mutex::new(SharedState::default()));
-    let (poll_tx, _poll_rx_unused) = crossbeam_channel::unbounded();
-    let tx_for_poll = synth_tx.clone().unwrap_or(poll_tx);
-    {
+    let initial_state = if screenshot_mode {
+        mock_demo_state()
+    } else {
+        SharedState::default()
+    };
+    let state = Arc::new(Mutex::new(initial_state));
+    if !screenshot_mode {
+        let (poll_tx, _poll_rx_unused) = crossbeam_channel::unbounded();
+        let tx_for_poll = synth_tx.clone().unwrap_or(poll_tx);
         let s = state.clone();
         let m = midi.clone();
         thread::Builder::new()
@@ -477,6 +562,7 @@ async fn main() {
         std::array::from_fn(|i| hsv(i as f32 / N_STRINGS as f32 * 0.78, 0.85, 1.0));
 
     let mut last_frame_time = Instant::now();
+    let mut screenshot_frame_count: u32 = 0;
 
     loop {
         if is_key_pressed(KeyCode::Escape) || is_key_pressed(KeyCode::Q) {
@@ -635,6 +721,40 @@ async fn main() {
                 22.0,
                 color_u8!(255, 200, 80, 255),
             );
+        }
+
+        if screenshot_mode {
+            screenshot_frame_count += 1;
+            // Capture BEFORE next_frame so we read the back buffer with the
+            // content we just drew, not whatever stale buffer is left after
+            // the swap. Wait a few warm-up frames first so the window is
+            // fully presented.
+            if screenshot_frame_count >= 6 {
+                let path = screenshot_path.as_deref().unwrap();
+                let img = macroquad::texture::get_screen_data();
+                let w = img.width() as u32;
+                let h = img.height() as u32;
+                match image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(
+                    w,
+                    h,
+                    img.bytes,
+                ) {
+                    Some(buf) => {
+                        // get_screen_data returns pixels with OpenGL origin
+                        // (bottom-left), so flip vertically before saving.
+                        let flipped = image::imageops::flip_vertical(&buf);
+                        if let Err(e) = flipped.save(path) {
+                            eprintln!("screenshot save failed: {e}");
+                        } else {
+                            println!("screenshot written to {path}");
+                        }
+                    }
+                    None => eprintln!("screenshot: bad framebuffer size"),
+                }
+                break;
+            }
+            // Keep mock state alive against decay
+            *state.lock().unwrap() = mock_demo_state();
         }
 
         next_frame().await;

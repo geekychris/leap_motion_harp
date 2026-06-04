@@ -15,6 +15,15 @@ pub struct MidiOut {
 }
 
 impl MidiOut {
+    /// A MIDI sink that swallows everything. Used in screenshot mode so we
+    /// don't open a real virtual port just to save a PNG.
+    pub fn disabled() -> Self {
+        Self {
+            conn: None,
+            label: "disabled".to_string(),
+        }
+    }
+
     pub fn open() -> Self {
         match try_open() {
             Ok((conn, label)) => Self {

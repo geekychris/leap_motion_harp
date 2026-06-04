@@ -2,7 +2,25 @@
 
 A small visual playground for an Ultraleap Hand Tracking device (formerly Leap
 Motion Controller / Controller 2 / 3Di / IR 170). The repo contains two
-implementations of the same demo:
+implementations of the same demo plus a Jean-Michel-Jarre-style laser harp.
+
+## Screenshot
+
+![Laser harp — both hands playing different instruments](docs/laser_harp_full.png)
+
+*Five horizontal pentatonic strings (lowest at the bottom), five octave
+columns across the top, two hands on different octave columns playing two
+different instruments on two different MIDI channels, sustain pedal engaged
+(right-hand pinch). Filled fingertip = extended (armed); hollow = curled
+(muted).*
+
+> To regenerate this screenshot:
+> `LASER_HARP_SCREENSHOT=docs/laser_harp_full.png cargo run --release` from
+> inside `laser_harp_rs/`. The app injects mock hand data, renders a few
+> frames to its own back buffer, exports a PNG, and exits. No OS screen
+> recording permission required.
+
+
 
 | Folder              | Language          | Purpose                                                 |
 | ------------------- | ----------------- | ------------------------------------------------------- |
