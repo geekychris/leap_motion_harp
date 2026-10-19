@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Leap Motion Harp logo" width="180">
+</p>
+
 # Leap Motion (Ultraleap) demo
 
 A small visual playground for an Ultraleap Hand Tracking device (formerly Leap
